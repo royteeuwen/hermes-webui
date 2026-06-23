@@ -6198,6 +6198,7 @@ function requestNotificationPermission(){
   if(Notification.permission==='granted'){
     if(typeof updateNotificationPermissionStatus==='function') updateNotificationPermissionStatus();
     if(typeof showToast==='function') showToast(t('notifications_enabled_toast'),3000);
+    if(window._pushEnabled&&typeof subscribeToPush==='function') subscribeToPush();  // #3196
     return Promise.resolve('granted');
   }
   if(Notification.permission==='denied'){
@@ -6208,8 +6209,59 @@ function requestNotificationPermission(){
   return Notification.requestPermission().then(p=>{
     if(typeof showToast==='function') showToast(p==='granted'?t('notifications_enabled_toast'):t('notifications_denied'),3000,p==='granted'?undefined:'error');
     if(typeof updateNotificationPermissionStatus==='function') updateNotificationPermissionStatus();
+    // #3196: if background push is enabled, register the subscription now that
+    // permission was just granted (subscribeToPush no-ops when push is off).
+    if(p==='granted'&&window._pushEnabled&&typeof subscribeToPush==='function') subscribeToPush();
     return p;
   });
+}
+// ── Web Push (VAPID) subscription (#3196) ─────────────────────────────────────
+// Background push needs a server-pushed notification (works when the tab/app is
+// closed), unlike the foreground sendBrowserNotification path below. Degrades
+// gracefully on browsers without PushManager (notably non-installed iOS Safari).
+function urlBase64ToUint8Array(base64){
+  const padding='='.repeat((4-base64.length%4)%4);
+  const b64=(base64+padding).replace(/-/g,'+').replace(/_/g,'/');
+  const raw=atob(b64);
+  const arr=new Uint8Array(raw.length);
+  for(let i=0;i<raw.length;i++) arr[i]=raw.charCodeAt(i);
+  return arr;
+}
+function subscribeToPush(){
+  if(!('serviceWorker' in navigator)||!('PushManager' in window)) return Promise.resolve(false);
+  if(!('Notification' in window)||Notification.permission!=='granted') return Promise.resolve(false);
+  return fetch(new URL('api/push/vapid-public-key',document.baseURI||location.href).href,{credentials:'same-origin'})
+    .then(r=>r.ok?r.json():null)
+    .then(info=>{
+      if(!info||!info.enabled||!info.key) return false;
+      const appKey=urlBase64ToUint8Array(info.key);
+      return navigator.serviceWorker.ready.then(reg=>
+        reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:appKey})
+      ).then(sub=>
+        fetch(new URL('api/push/subscribe',document.baseURI||location.href).href,{
+          method:'POST',credentials:'same-origin',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify(sub)
+        }).then(()=>true)
+      );
+    })
+    .catch(err=>{console.warn('Push subscribe failed:',err);return false;});
+}
+function unsubscribeFromPush(){
+  if(!('serviceWorker' in navigator)||!('PushManager' in window)) return Promise.resolve(false);
+  return navigator.serviceWorker.ready.then(reg=>reg.pushManager.getSubscription())
+    .then(sub=>{
+      if(!sub) return false;
+      const endpoint=sub.endpoint;
+      return sub.unsubscribe().catch(()=>true).then(()=>
+        fetch(new URL('api/push/unsubscribe',document.baseURI||location.href).href,{
+          method:'POST',credentials:'same-origin',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({endpoint})
+        }).then(()=>true)
+      );
+    })
+    .catch(err=>{console.warn('Push unsubscribe failed:',err);return false;});
 }
 function sendBrowserNotification(title,body,options={}){
   const force=!!(options&&options.force);

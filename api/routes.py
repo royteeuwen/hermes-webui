@@ -9001,6 +9001,19 @@ def handle_get(handler, parsed) -> bool:
             pass
         return j(handler, settings)
 
+    # ── Web Push (VAPID) discovery/status (#3196) ─────────────────────────────
+    if parsed.path == "/api/push/vapid-public-key":
+        from api.push import get_vapid_public_key, push_enabled
+        return j(handler, {"key": get_vapid_public_key(), "enabled": push_enabled()})
+
+    if parsed.path == "/api/push/status":
+        from api.push import push_enabled, subscription_count
+        return j(handler, {
+            "enabled": push_enabled(),
+            "supported": True,
+            "subscription_count": subscription_count(),
+        })
+
     if parsed.path == "/api/transcribe/capability":
         return handle_transcribe_capability(handler)
 
@@ -11667,6 +11680,26 @@ def handle_post(handler, parsed) -> bool:
         handler.end_headers()
         handler.wfile.write(response_body)
         return True
+
+    # ── Web Push (VAPID) subscription management (#3196) ──────────────────────
+    # All no-ops when HERMES_WEBUI_PUSH_ENABLED is not truthy (push.* gates).
+    if parsed.path == "/api/push/subscribe":
+        # ``body`` was already read once at the top of handle_post; reading the
+        # request stream again here would block until timeout.
+        from api.push import add_subscription
+        ok = add_subscription(body if isinstance(body, dict) else {})
+        return j(handler, {"ok": bool(ok)})
+
+    if parsed.path == "/api/push/unsubscribe":
+        from api.push import remove_subscription
+        endpoint = str((body or {}).get("endpoint", "") or "")
+        remove_subscription(endpoint)
+        return j(handler, {"ok": True})
+
+    if parsed.path == "/api/push/test":
+        from api.push import send_web_push_to_all
+        send_web_push_to_all("Hermes test", "Push is working", "./")
+        return j(handler, {"ok": True})
 
     if parsed.path == "/api/onboarding/oauth/start":
         if not _onboarding_gate_allows(handler):

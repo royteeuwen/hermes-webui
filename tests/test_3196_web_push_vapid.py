@@ -1,0 +1,190 @@
+"""Coverage for opt-in Web Push (VAPID) background notifications (#3196).
+
+Mostly static-source assertions (the established style for PWA/SW/settings
+wiring in this repo), plus a few behavioural checks that the feature is a strict
+no-op when ``HERMES_WEBUI_PUSH_ENABLED`` is not set.
+"""
+
+import importlib
+import os
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+SW_JS = (ROOT / "static" / "sw.js").read_text(encoding="utf-8")
+MESSAGES_JS = (ROOT / "static" / "messages.js").read_text(encoding="utf-8")
+INDEX_HTML = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+BOOT_JS = (ROOT / "static" / "boot.js").read_text(encoding="utf-8")
+PANELS_JS = (ROOT / "static" / "panels.js").read_text(encoding="utf-8")
+ROUTES_PY = (ROOT / "api" / "routes.py").read_text(encoding="utf-8")
+CONFIG_PY = (ROOT / "api" / "config.py").read_text(encoding="utf-8")
+STREAMING_PY = (ROOT / "api" / "streaming.py").read_text(encoding="utf-8")
+REQUIREMENTS = (ROOT / "requirements.txt").read_text(encoding="utf-8")
+SERVER_PY = (ROOT / "server.py").read_text(encoding="utf-8")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def test_server():
+    """This module reads source + exercises gating only; no HTTP server needed."""
+
+
+# ── Service worker ────────────────────────────────────────────────────────────
+
+def test_sw_registers_push_listener_before_notificationclick():
+    push_idx = SW_JS.index("self.addEventListener('push'")
+    click_idx = SW_JS.index("self.addEventListener('notificationclick'")
+    assert push_idx < click_idx
+    assert "event.waitUntil(self.registration.showNotification(title, options))" in SW_JS
+
+
+def test_sw_push_builds_data_url_shape_for_clickthrough():
+    handler = SW_JS[SW_JS.index("self.addEventListener('push'"):]
+    handler = handler[: handler.index("self.addEventListener('notificationclick'")]
+    assert "event.data.json()" in handler
+    assert "data: { url }" in handler
+    assert "icon: 'static/favicon-192.png'" in handler
+    assert "badge: 'static/favicon-32.png'" in handler
+
+
+# ── Client subscribe/unsubscribe ──────────────────────────────────────────────
+
+def test_messages_js_has_subscribe_helpers():
+    assert "function urlBase64ToUint8Array(" in MESSAGES_JS
+    assert "function subscribeToPush(" in MESSAGES_JS
+    assert "function unsubscribeFromPush(" in MESSAGES_JS
+    assert "pushManager.subscribe({userVisibleOnly:true,applicationServerKey:appKey})" in MESSAGES_JS
+    assert "api/push/vapid-public-key" in MESSAGES_JS
+    assert "api/push/subscribe" in MESSAGES_JS
+    assert "api/push/unsubscribe" in MESSAGES_JS
+
+
+def test_messages_js_degrades_without_pushmanager():
+    assert "if(!('serviceWorker' in navigator)||!('PushManager' in window)) return Promise.resolve(false);" in MESSAGES_JS
+
+
+def test_permission_grant_subscribes_when_push_enabled():
+    assert "window._pushEnabled&&typeof subscribeToPush==='function'" in MESSAGES_JS
+
+
+# ── Settings UI + flag wiring ─────────────────────────────────────────────────
+
+def test_index_html_has_push_toggle():
+    assert 'id="settingsPushEnabled"' in INDEX_HTML
+    assert "iOS 16.4+" in INDEX_HTML
+
+
+def test_boot_js_reads_back_push_flag():
+    assert "window._pushEnabled=!!s.push_enabled;" in BOOT_JS
+    assert "window._pushEnabled=false;" in BOOT_JS
+
+
+def test_panels_js_persists_and_toggles_push():
+    assert "payload.push_enabled=pushCb.checked;" in PANELS_JS
+    assert "body.push_enabled=!!($('settingsPushEnabled')||{}).checked;" in PANELS_JS
+    assert "settings.push_enabled" in PANELS_JS
+    assert "unsubscribeFromPush()" in PANELS_JS
+
+
+# ── Server routes ─────────────────────────────────────────────────────────────
+
+def test_routes_define_push_endpoints():
+    for route in (
+        "/api/push/vapid-public-key",
+        "/api/push/status",
+        "/api/push/subscribe",
+        "/api/push/unsubscribe",
+        "/api/push/test",
+    ):
+        assert f'"{route}"' in ROUTES_PY, route
+
+
+# ── Persisted setting ─────────────────────────────────────────────────────────
+
+def test_config_has_push_enabled_setting():
+    assert '"push_enabled": False' in CONFIG_PY
+    # Allowlisted as a bool key so /api/settings can persist it.
+    bool_block = CONFIG_PY[CONFIG_PY.index("_SETTINGS_BOOL_KEYS"):]
+    assert '"push_enabled",' in bool_block
+
+
+# ── Requirements ──────────────────────────────────────────────────────────────
+
+def test_pywebpush_is_a_hard_dependency():
+    assert "pywebpush" in REQUIREMENTS
+
+
+# ── Server-side trigger hooks ─────────────────────────────────────────────────
+
+def test_turn_complete_push_fires_near_done_emission():
+    done_idx = STREAMING_PY.index("put('done', _done_payload)")
+    after = STREAMING_PY[done_idx: done_idx + 600]
+    assert "_maybe_push_turn_complete(s, session_id, failed=False)" in after
+
+
+def test_run_failed_push_on_error_path():
+    assert "_maybe_push_turn_complete(s, getattr(s, 'session_id', session_id), failed=True)" in STREAMING_PY
+    # Not fired on user cancel/interrupt.
+    assert "_exc_type not in ('cancelled', 'interrupted')" in STREAMING_PY
+
+
+def test_approval_push_on_authoritative_notify_callback():
+    cb_idx = STREAMING_PY.index("def _approval_notify_cb(approval_data):")
+    cb = STREAMING_PY[cb_idx: cb_idx + 800]
+    assert "_maybe_push_approval(session_id, approval_data)" in cb
+
+
+def test_cron_push_watcher_started_in_server():
+    assert "start_cron_push_watcher" in SERVER_PY
+    assert "stop_cron_push_watcher" in SERVER_PY
+
+
+# ── Behavioural gating (the no-op contract) ───────────────────────────────────
+
+@pytest.fixture
+def push_module(monkeypatch, tmp_path):
+    monkeypatch.setenv("HERMES_WEBUI_STATE_DIR", str(tmp_path))
+    monkeypatch.delenv("HERMES_WEBUI_PUSH_ENABLED", raising=False)
+    import api.paths
+    importlib.reload(api.paths)
+    import api.push
+    mod = importlib.reload(api.push)
+    yield mod
+    # Restore module state for other tests.
+    monkeypatch.undo()
+    importlib.reload(api.paths)
+    importlib.reload(api.push)
+
+
+def test_disabled_is_strict_noop(push_module, tmp_path):
+    assert push_module.push_enabled() is False
+    assert push_module.get_vapid_public_key() == ""
+    assert push_module.add_subscription({"endpoint": "https://example/x"}) is False
+    assert push_module.subscription_count() == 0
+    # send_web_push_to_all returns immediately and writes nothing.
+    push_module.send_web_push_to_all("t", "b", "./")
+    assert not (tmp_path / "push_subscriptions.json").exists()
+    assert not (tmp_path / "vapid_keys.json").exists()
+
+
+def test_enabled_stores_subscription_without_sending(monkeypatch, tmp_path):
+    monkeypatch.setenv("HERMES_WEBUI_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("HERMES_WEBUI_PUSH_ENABLED", "1")
+    import api.paths
+    importlib.reload(api.paths)
+    import api.push
+    mod = importlib.reload(api.push)
+    try:
+        assert mod.push_enabled() is True
+        assert mod.add_subscription({"endpoint": "https://example/abc", "keys": {}}) is True
+        assert mod.subscription_count() == 1
+        assert (tmp_path / "push_subscriptions.json").exists()
+        # De-dupe by endpoint.
+        mod.add_subscription({"endpoint": "https://example/abc", "keys": {}})
+        assert mod.subscription_count() == 1
+        assert mod.remove_subscription("https://example/abc") is True
+        assert mod.subscription_count() == 0
+    finally:
+        monkeypatch.undo()
+        importlib.reload(api.paths)
+        importlib.reload(api.push)

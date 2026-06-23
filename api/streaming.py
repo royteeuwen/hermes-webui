@@ -1073,6 +1073,71 @@ def _drop_synthetic_max_iteration_summary_requests(messages, *, enabled: bool = 
     ]
 
 
+def _push_session_url(session_id) -> str:
+    """Relative deep link to a session, for Web Push payloads (#3196).
+
+    Relative so the service worker resolves it against its registration scope
+    (mirrors sw.js's ``new URL(rawUrl, scope)`` handling).
+    """
+    sid = str(session_id or '')
+    return f'./session/{sid}' if sid else './'
+
+
+def _last_assistant_snippet(session, limit: int = 140) -> str:
+    """Short plain-text preview of the latest assistant message for a push body."""
+    try:
+        for _m in reversed(getattr(session, 'messages', None) or []):
+            if not isinstance(_m, dict) or _m.get('role') != 'assistant':
+                continue
+            content = _m.get('content', '')
+            if isinstance(content, list):
+                parts = []
+                for part in content:
+                    if isinstance(part, dict):
+                        txt = part.get('text') or part.get('content')
+                        if txt:
+                            parts.append(str(txt))
+                content = '\n'.join(parts)
+            text = str(content or '').strip()
+            if not text:
+                continue
+            return text[:limit] + ('…' if len(text) > limit else '')
+    except Exception:
+        logger.debug('Failed to build push snippet', exc_info=True)
+    return ''
+
+
+def _maybe_push_turn_complete(session, session_id, *, failed: bool = False) -> None:
+    """Fire a Web Push for an end-of-turn / failure event (#3196).
+
+    No-op when push is disabled (push.send_web_push_to_all gates internally) and
+    never raises — must not disturb the SSE done/error emission.
+    """
+    try:
+        from api.push import send_web_push_to_all
+        url = _push_session_url(session_id)
+        if failed:
+            send_web_push_to_all('Run failed', 'A Hermes run ended with an error.', url)
+        else:
+            body = _last_assistant_snippet(session) or 'Your Hermes response is ready.'
+            send_web_push_to_all('Response ready', body, url)
+    except Exception:
+        logger.debug('Web Push (turn complete) dispatch failed', exc_info=True)
+
+
+def _maybe_push_approval(session_id, approval_data) -> None:
+    """Fire a Web Push when a tool call is blocked awaiting approval (#3196)."""
+    try:
+        from api.push import send_web_push_to_all
+        cmd = ''
+        if isinstance(approval_data, dict):
+            cmd = str(approval_data.get('command') or approval_data.get('tool') or '').strip()
+        body = f'A tool call needs your approval: {cmd}' if cmd else 'A tool call needs your approval.'
+        send_web_push_to_all('Approval needed', body[:140], _push_session_url(session_id))
+    except Exception:
+        logger.debug('Web Push (approval) dispatch failed', exc_info=True)
+
+
 def _agent_result_tool_limit_reached(result) -> bool:
     """Return True when current-turn metadata says the tool iteration cap fired."""
     if not isinstance(result, dict):
@@ -6174,6 +6239,11 @@ def _run_agent_streaming(
                     except Exception:
                         logger.warning("Failed to mirror approval into WebUI polling state", exc_info=True)
                 put('approval', approval_data)
+                # #3196: background Web Push the moment a tool call blocks on
+                # approval. This is the authoritative once-per-approval emission
+                # (the polling fallback below re-fires per tick, so we do NOT
+                # push there). No-op when push is disabled.
+                _maybe_push_approval(session_id, approval_data)
             _reg_notify(session_id, _approval_notify_cb)
             _approval_registered = True
         except ImportError:
@@ -7738,6 +7808,10 @@ def _run_agent_streaming(
                             _error_payload['terminal_state'] = 'tool_limit_reached'
                             _error_payload['terminal_reason'] = 'max_iterations'
                         put('apperror', _error_payload)
+                        # #3196: background Web Push for a failed run (compression
+                        # exhausted). No-op when push is disabled; skip cancel/interrupt.
+                        if _err_type not in ('cancelled', 'interrupted'):
+                            _maybe_push_turn_complete(s, s.session_id, failed=True)
                         # Legacy #373 source tests and clients look for the
                         # no_response type; #1765 keeps that type but improves
                         # the catch-all label, hint, and provider details.
@@ -8475,6 +8549,11 @@ def _run_agent_streaming(
                 _done_payload['terminal_state'] = 'tool_limit_reached'
                 _done_payload['terminal_reason'] = 'max_iterations'
             put('done', _done_payload)
+            # #3196: background Web Push for turn-complete / new assistant reply.
+            # No-op when push is disabled; dispatched on a worker thread so it
+            # never blocks the authoritative done emission above. Skipped for
+            # ephemeral turns (which return before reaching this path).
+            _maybe_push_turn_complete(s, session_id, failed=False)
             # Emit one last metering packet for the live message-header TPS label.
             meter_stats = meter().get_stats()
             meter_stats['session_id'] = session_id
@@ -8756,6 +8835,10 @@ def _run_agent_streaming(
             _error_payload['session_id'] = getattr(s, 'session_id', session_id)
             _error_payload['old_session_id'] = session_id
         put('apperror', _error_payload)
+        # #3196: background Web Push for a failed run. No-op when push is
+        # disabled. Skip user-initiated cancel/interrupt — those aren't failures.
+        if not ephemeral and _exc_type not in ('cancelled', 'interrupted'):
+            _maybe_push_turn_complete(s, getattr(s, 'session_id', session_id), failed=True)
     finally:
         # Stop the periodic checkpoint thread before the final recovery path.
         # The checkpoint thread also uses the per-session lock; joining it first

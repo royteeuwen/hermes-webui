@@ -629,6 +629,17 @@ def main() -> None:
     except Exception as e:
         print(f'[!!] WARNING: SessionChannel reaper failed to start: {e}', flush=True)
 
+    # Start the Web Push cron-completion watcher (#3196). The client cron poll
+    # stops when the tab is hidden, so this server-side detector fires a Web
+    # Push when a cron job newly completes. No-op when push is disabled (the
+    # thread still starts but every tick early-returns before reading state).
+    try:
+        from api.push_cron_watcher import start_cron_push_watcher
+        if start_cron_push_watcher():
+            print('[ok] Web Push cron watcher started', flush=True)
+    except Exception as e:
+        print(f'[!!] WARNING: Web Push cron watcher failed to start: {e}', flush=True)
+
     # Load WebUI dashboard plugins
     try:
         from api.plugins import load_plugins
@@ -690,6 +701,11 @@ def main() -> None:
             stop_session_channel_reaper()
         except Exception:
             logger.debug("Failed to stop SessionChannel reaper during shutdown", exc_info=True)
+        try:
+            from api.push_cron_watcher import stop_cron_push_watcher
+            stop_cron_push_watcher()
+        except Exception:
+            logger.debug("Failed to stop Web Push cron watcher during shutdown", exc_info=True)
 
 if __name__ == '__main__':
     main()

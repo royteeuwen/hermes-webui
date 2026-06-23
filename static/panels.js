@@ -6991,6 +6991,8 @@ function _preferencesPayloadFromUi(){
   if(rtlCb) payload.rtl=rtlCb.checked;
   const notifCb=$('settingsNotificationsEnabled');
   if(notifCb) payload.notifications_enabled=notifCb.checked;
+  const pushCb=$('settingsPushEnabled');
+  if(pushCb) payload.push_enabled=pushCb.checked;
   const sidebarDensitySel=$('settingsSidebarDensity');
   if(sidebarDensitySel) payload.sidebar_density=sidebarDensitySel.value;
   const pinnedLimitField=$('settingsPinnedSessionsLimit');
@@ -7515,6 +7517,23 @@ async function loadSettingsPanel(){
     }
     const notifCb=$('settingsNotificationsEnabled');
     if(notifCb){notifCb.checked=!!settings.notifications_enabled;notifCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
+    const pushCb=$('settingsPushEnabled');
+    if(pushCb){
+      pushCb.checked=!!settings.push_enabled;
+      window._pushEnabled=!!settings.push_enabled;
+      pushCb.addEventListener('change',function(){
+        window._pushEnabled=pushCb.checked;
+        // #3196: register/drop the browser push subscription on toggle. When the
+        // permission isn't granted yet, requesting it triggers the subscribe.
+        if(pushCb.checked){
+          if(typeof requestNotificationPermission==='function') requestNotificationPermission();
+          else if(typeof subscribeToPush==='function') subscribeToPush();
+        }else if(typeof unsubscribeFromPush==='function'){
+          unsubscribeFromPush();
+        }
+        _schedulePreferencesAutosave();
+      },{once:false});
+    }
     // show_thinking has no settings panel checkbox — controlled via /reasoning show|hide
     const sidebarDensitySel=$('settingsSidebarDensity');
     if(sidebarDensitySel){
@@ -8780,6 +8799,7 @@ function _applySavedSettingsUi(saved, body, opts){
   window._showPreviousMessagingSessions=!!body.show_previous_messaging_sessions;
   window._soundEnabled=body.sound_enabled;
   window._notificationsEnabled=body.notifications_enabled;
+  window._pushEnabled=!!body.push_enabled;
   window._whatsNewSummaryEnabled=!!body.whats_new_summary_enabled;
   window._showThinking=body.show_thinking!==false;
   window._simplifiedToolCalling=true;
@@ -9328,6 +9348,7 @@ async function saveSettings(andClose){
   body.sound_enabled=!!($('settingsSoundEnabled')||{}).checked;
   body.rtl=!!($('settingsRtl')||{}).checked;
   body.notifications_enabled=!!($('settingsNotificationsEnabled')||{}).checked;
+  body.push_enabled=!!($('settingsPushEnabled')||{}).checked;
   body.show_thinking=window._showThinking!==false;
   body.sidebar_density=sidebarDensity;
   body.busy_input_mode=busyInputMode;

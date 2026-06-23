@@ -1212,6 +1212,11 @@
                 <button type="button" class="sm-btn" onclick="sendBrowserNotification('Hermes test','Notifications are ready.',{force:true});" style="padding:5px 10px;font-size:12px" data-i18n="notifications_test_btn">Send test</button>
                 <span id="notificationPermissionStatus" style="font-size:11px;color:var(--muted)"></span>
               </div>
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:10px">
+                <input type="checkbox" id="settingsPushEnabled" style="width:15px;height:15px;accent-color:var(--accent)">
+                <span data-i18n="settings_label_push">Background push</span>
+              </label>
+              <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="settings_desc_push">Deliver notifications even when the app is closed (Web Push). Requires installing as an app; iOS 16.4+. Server-side push must be enabled.</div>
             </div>
             <div class="settings-field">
               <label style="display:flex;align-items:center;gap:8px;cursor:pointer">

@@ -75,3 +75,22 @@ def _platform_default_hermes_home() -> Path:
                 return legacy_home
             return new_home
     return HOME / ".hermes"
+
+
+# ── WebUI state directory (mirrors api.config.STATE_DIR resolution) ───────────
+# Defined here so low-level modules (e.g. api.push) can derive state-file paths
+# without importing api.config (which has heavier startup side effects and would
+# create an import cycle). Kept byte-for-byte in step with config.STATE_DIR.
+_DEFAULT_STATE_HOME = Path(
+    os.getenv("HERMES_HOME") or _platform_default_hermes_home()
+).expanduser()
+
+STATE_DIR = (
+    Path(os.getenv("HERMES_WEBUI_STATE_DIR", str(_DEFAULT_STATE_HOME / "webui")))
+    .expanduser()
+    .resolve()
+)
+
+# Web Push (VAPID) state files (#3196). Live alongside settings.json.
+VAPID_KEYS_FILE = STATE_DIR / "vapid_keys.json"
+PUSH_SUBSCRIPTIONS_FILE = STATE_DIR / "push_subscriptions.json"

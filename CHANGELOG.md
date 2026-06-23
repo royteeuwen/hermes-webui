@@ -3,6 +3,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Background Web Push notifications (VAPID).** Opt-in, gated behind the `HERMES_WEBUI_PUSH_ENABLED` env var (default off). When enabled, an installed PWA can receive notifications even while the tab/app is closed — covering turn-complete / new assistant reply, run failed, tool-call approval required, and cron-job completion. A new "Background push" toggle lives in Settings under Browser notifications. VAPID keys are generated once into the WebUI state dir (`vapid_keys.json`) or supplied via `HERMES_WEBUI_VAPID_PUBLIC_KEY` / `HERMES_WEBUI_VAPID_PRIVATE_KEY` / `HERMES_WEBUI_VAPID_SUBJECT`; subscriptions persist in `push_subscriptions.json`. When the env var is unset the feature is a strict no-op (no endpoints active, no keys generated, default behavior unchanged). Adds `pywebpush` as a dependency. (#3196)
+
 ## [v0.51.564] — 2026-06-21 — Release TW (loopback sidecar diagnostics)
 
 ### Added

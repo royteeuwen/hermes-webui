@@ -174,6 +174,31 @@ self.addEventListener('fetch', (event) => {
 });
 
 
+// Web Push (VAPID) — background notifications (#3196). Builds the SAME
+// data:{url} shape the notificationclick handler reads below, so click-to-focus
+// reuses the existing tab-matching logic unchanged. Option keys mirror
+// messages.js _notificationOptions().
+self.addEventListener('push', (event) => {
+  let payload = {};
+  try {
+    payload = event.data ? event.data.json() : {};
+  } catch (_e) {
+    try { payload = { body: event.data ? event.data.text() : '' }; } catch (_e2) { payload = {}; }
+  }
+  const title = payload.title || 'Hermes';
+  const url = payload.url || './';
+  const options = {
+    body: payload.body || '',
+    tag: payload.tag || 'hermes-webui',
+    renotify: false,
+    icon: 'static/favicon-192.png',
+    badge: 'static/favicon-32.png',
+    data: { url },
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const rawUrl = (event.notification.data && event.notification.data.url) || './';
