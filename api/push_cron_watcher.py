@@ -183,8 +183,14 @@ def _tick() -> None:
             url = f"./session/{sid}" if sid else "./"
             title = f"Cron complete: {name}" if ok else f"Cron failed: {name}"
             if ok:
-                # Prefer the run's actual output; fall back to a generic line.
-                body = _cron_output_snippet(job_id, sid) or "Scheduled task finished."
+                body = _cron_output_snippet(job_id, sid)
+                # Parity with cron delivery (scheduler: SILENT_MARKER in content
+                # → skip delivery): don't push runs the agent asked to stay silent
+                # on. Empty output still pushes a generic line (extraction gaps
+                # shouldn't drop a real completion).
+                if body and "[SILENT]" in body.upper():
+                    continue
+                body = body or "Scheduled task finished."
             else:
                 err = str(c.get("last_error") or "").strip()
                 err = " ".join(err.split())

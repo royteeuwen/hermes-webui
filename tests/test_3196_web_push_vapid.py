@@ -205,6 +205,37 @@ def test_cron_push_deep_links_and_includes_output():
     assert "c.get('session_id'" not in CRON_WATCHER_PY
     # Failures surface the real error text.
     assert "last_error" in CRON_WATCHER_PY
+    # Parity with cron delivery: silent runs are not pushed.
+    assert "[SILENT]" in CRON_WATCHER_PY
+
+
+def test_cron_push_suppresses_silent_runs(monkeypatch):
+    import api.push_cron_watcher as w
+    import api.push as push
+
+    sent = []
+    monkeypatch.setattr(push, "send_web_push_to_all",
+                        lambda title, body, url, tag=None: sent.append((title, body)))
+    monkeypatch.setattr(w, "_push_enabled", lambda: True)
+    monkeypatch.setattr(w, "_cron_session_id", lambda job_id: "sess1")
+    monkeypatch.setattr(w, "_list_completions", lambda: [
+        {"job_id": "j1", "name": "pr-watch", "status": "ok",
+         "completed_at": 200.0, "toast_notifications": True, "last_error": ""},
+    ])
+
+    def run_once(output):
+        monkeypatch.setattr(w, "_cron_output_snippet", lambda job_id, sid: output)
+        w._seen_completion_ts.clear()
+        w._seen_completion_ts["j1"] = 100.0  # an older run we've already seen
+        w._primed = True
+        sent.clear()
+        w._tick()
+
+    run_once("[SILENT]")                       # agent asked to stay silent
+    assert sent == [], "silent run must not push"
+
+    run_once("3 PRs awaiting review")          # real content
+    assert len(sent) == 1 and sent[0][1] == "3 PRs awaiting review"
 
 
 # ── Behavioural gating (the no-op contract) ───────────────────────────────────
