@@ -198,8 +198,9 @@ def test_cron_push_deep_links_and_includes_output():
     # "Scheduled task finished."
     assert "def _cron_session_id(" in CRON_WATCHER_PY
     assert "def _cron_output_snippet(" in CRON_WATCHER_PY
+    assert "def _cron_output_from_file(" in CRON_WATCHER_PY  # delivered output, both job kinds
     assert "sid = _cron_session_id(job_id)" in CRON_WATCHER_PY
-    assert "_cron_output_snippet(sid)" in CRON_WATCHER_PY
+    assert "_cron_output_snippet(job_id, sid)" in CRON_WATCHER_PY
     # No longer reads the never-populated session_id key off the job dict.
     assert "c.get('session_id'" not in CRON_WATCHER_PY
     # Failures surface the real error text.

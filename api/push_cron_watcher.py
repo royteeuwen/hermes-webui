@@ -88,17 +88,60 @@ def _cron_session_id(job_id: str) -> str:
         return ""
 
 
-def _cron_output_snippet(session_id: str) -> str:
-    """Short preview of the cron run's last assistant message, or ''."""
+def _clean_snippet(text: str, limit: int = 140) -> str:
+    """Collapse whitespace and truncate for a notification body."""
+    text = " ".join(str(text or "").split())
+    return (text[:limit] + "…") if len(text) > limit else text
+
+
+def _cron_output_from_file(job_id: str) -> str:
+    """Preview of the run's delivered output from its cron output ``.md``.
+
+    The agent writes ``{OUTPUT_DIR}/{job_id}/{timestamp}.md`` for every run with
+    ``## Response`` (agent jobs) and/or ``## Script Output`` (script jobs) — the
+    same text delivered to the channel. Prefer the response, fall back to script
+    output. Returns '' if unavailable.
+    """
+    try:
+        from cron.jobs import OUTPUT_DIR
+        job_dir = OUTPUT_DIR / job_id
+        files = sorted(job_dir.glob("*.md")) if job_dir.exists() else []
+        if not files:
+            return ""
+        body = files[-1].read_text(encoding="utf-8", errors="replace")
+        # Split the section-delimited file into {header: text}.
+        sections, current, buf = {}, None, []
+        for line in body.splitlines():
+            if line.startswith("## "):
+                if current is not None:
+                    sections[current] = "\n".join(buf).strip()
+                current, buf = line[3:].strip().lower(), []
+            elif current is not None:
+                buf.append(line)
+        if current is not None:
+            sections[current] = "\n".join(buf).strip()
+        return _clean_snippet(sections.get("response") or sections.get("script output") or "")
+    except Exception:
+        logger.debug("cron push watcher: output-file read failed", exc_info=True)
+        return ""
+
+
+def _cron_output_snippet(job_id: str, session_id: str) -> str:
+    """Short preview of the run's output for the push body, or ''.
+
+    Prefers the delivered cron output file (works for both agent and script
+    jobs); falls back to the session's last assistant message.
+    """
+    snippet = _cron_output_from_file(job_id)
+    if snippet:
+        return snippet
     if not session_id:
         return ""
     try:
         from api.models import get_session
         from api.streaming import _last_assistant_snippet
         session = get_session(session_id)
-        if session is None:
-            return ""
-        return _last_assistant_snippet(session)
+        return _last_assistant_snippet(session) if session is not None else ""
     except Exception:
         logger.debug("cron push watcher: snippet build failed", exc_info=True)
         return ""
@@ -141,7 +184,7 @@ def _tick() -> None:
             title = f"Cron complete: {name}" if ok else f"Cron failed: {name}"
             if ok:
                 # Prefer the run's actual output; fall back to a generic line.
-                body = _cron_output_snippet(sid) or "Scheduled task finished."
+                body = _cron_output_snippet(job_id, sid) or "Scheduled task finished."
             else:
                 err = str(c.get("last_error") or "").strip()
                 err = " ".join(err.split())
