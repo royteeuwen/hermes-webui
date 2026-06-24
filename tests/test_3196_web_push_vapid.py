@@ -20,6 +20,8 @@ PANELS_JS = (ROOT / "static" / "panels.js").read_text(encoding="utf-8")
 ROUTES_PY = (ROOT / "api" / "routes.py").read_text(encoding="utf-8")
 CONFIG_PY = (ROOT / "api" / "config.py").read_text(encoding="utf-8")
 STREAMING_PY = (ROOT / "api" / "streaming.py").read_text(encoding="utf-8")
+GATEWAY_CHAT_PY = (ROOT / "api" / "gateway_chat.py").read_text(encoding="utf-8")
+CRON_WATCHER_PY = (ROOT / "api" / "push_cron_watcher.py").read_text(encoding="utf-8")
 REQUIREMENTS = (ROOT / "requirements.txt").read_text(encoding="utf-8")
 SERVER_PY = (ROOT / "server.py").read_text(encoding="utf-8")
 
@@ -137,6 +139,71 @@ def test_approval_push_on_authoritative_notify_callback():
 def test_cron_push_watcher_started_in_server():
     assert "start_cron_push_watcher" in SERVER_PY
     assert "stop_cron_push_watcher" in SERVER_PY
+
+
+# ── Gateway-mode hooks (chat backend = gateway bypasses streaming.py) ──────────
+
+def test_gateway_mode_mirrors_push_hooks_in_put_gateway_event():
+    # Gateway-mode chat never runs the in-process streaming path, so its terminal
+    # events must be routed through the push helper from put_gateway_event.
+    assert "_maybe_gateway_push(event, data, session_id, stream_id)" in GATEWAY_CHAT_PY
+    assert "def _maybe_gateway_push(" in GATEWAY_CHAT_PY
+    for ev in ('"done"', '"apperror"', '"approval"'):
+        assert ev in GATEWAY_CHAT_PY
+
+
+def test_gateway_push_helper_routes_terminal_events(monkeypatch):
+    import api.gateway_chat as g
+    import api.push as push
+
+    sent = []
+    monkeypatch.setattr(push, "push_enabled", lambda: True)
+    monkeypatch.setattr(push, "send_web_push_to_all",
+                        lambda title, body, url, tag=None: sent.append((title, body, url, tag)))
+    # Real assistant content flows into the push body via STREAM_PARTIAL_TEXT.
+    g.STREAM_PARTIAL_TEXT["s1"] = "The build is green and deployed."
+    try:
+        g._maybe_gateway_push("done", {}, "s1", "s1")
+        g._maybe_gateway_push("apperror", {"message": "gateway exploded"}, "s1", "s1")
+        g._maybe_gateway_push("approval", {"command": "rm -rf /tmp/x"}, "s1", "s1")
+        g._maybe_gateway_push("token", {"text": "noise"}, "s1", "s1")  # non-terminal: ignored
+    finally:
+        g.STREAM_PARTIAL_TEXT.pop("s1", None)
+
+    assert len(sent) == 3, sent
+    titles = [s[0] for s in sent]
+    assert titles == ["Response ready", "Run failed", "Approval needed"]
+    assert sent[0][1] == "The build is green and deployed."   # actual content, not a ping
+    assert sent[0][2] == "./session/s1"                        # deep-link
+    assert "gateway exploded" in sent[1][1]
+    assert "rm -rf /tmp/x" in sent[2][1]
+
+
+def test_gateway_push_helper_is_noop_when_disabled(monkeypatch):
+    import api.gateway_chat as g
+    import api.push as push
+    sent = []
+    monkeypatch.setattr(push, "push_enabled", lambda: False)
+    monkeypatch.setattr(push, "send_web_push_to_all",
+                        lambda *a, **k: sent.append(a))
+    g._maybe_gateway_push("done", {}, "s1", "s1")
+    assert sent == []
+
+
+# ── Cron push enrichment (deep-link + real output, not a bare ping) ───────────
+
+def test_cron_push_deep_links_and_includes_output():
+    # The watcher must resolve the run's session for the deep-link and use the
+    # actual output as the body — the old code linked to "./" and said only
+    # "Scheduled task finished."
+    assert "def _cron_session_id(" in CRON_WATCHER_PY
+    assert "def _cron_output_snippet(" in CRON_WATCHER_PY
+    assert "sid = _cron_session_id(job_id)" in CRON_WATCHER_PY
+    assert "_cron_output_snippet(sid)" in CRON_WATCHER_PY
+    # No longer reads the never-populated session_id key off the job dict.
+    assert "c.get('session_id'" not in CRON_WATCHER_PY
+    # Failures surface the real error text.
+    assert "last_error" in CRON_WATCHER_PY
 
 
 # ── Behavioural gating (the no-op contract) ───────────────────────────────────

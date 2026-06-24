@@ -472,6 +472,43 @@ def _clear_gateway_pending_state(session: Any, stream_id: str) -> None:
     session.save()
 
 
+def _maybe_gateway_push(event, data, session_id, stream_id):
+    """Mirror streaming.py's Web Push hooks for gateway-mode chat (#3196).
+
+    Gateway-mode turns never run through the in-process streaming path, so the
+    push hooks there don't fire. Translate the three terminal gateway events into
+    a background Web Push: response ready (with a content snippet), run failed,
+    and approval needed — each deep-linking to the session. Strict no-op when push
+    is disabled; never raises (must not break the SSE stream).
+    """
+    if event not in ("done", "apperror", "approval"):
+        return
+    try:
+        from api.push import push_enabled, send_web_push_to_all
+        if not push_enabled():
+            return
+        sid = str(session_id or "")
+        url = f"./session/{sid}" if sid else "./"
+        if event == "done":
+            snippet = (STREAM_PARTIAL_TEXT.get(stream_id) or "").strip()
+            snippet = " ".join(snippet.split())
+            body = (snippet[:140] + "…") if len(snippet) > 140 else (snippet or "Your Hermes response is ready.")
+            send_web_push_to_all("Response ready", body, url, tag=f"turn-{sid}" if sid else None)
+        elif event == "apperror":
+            msg = ""
+            if isinstance(data, dict):
+                msg = str(data.get("message") or data.get("label") or "").strip()
+            send_web_push_to_all("Run failed", (msg[:140] or "A Hermes run ended with an error."), url)
+        elif event == "approval":
+            cmd = ""
+            if isinstance(data, dict):
+                cmd = str(data.get("command") or data.get("tool") or data.get("label") or "").strip()
+            body = (f"Approve to continue: {cmd}"[:140]) if cmd else "A tool call needs your approval."
+            send_web_push_to_all("Approval needed", body, url, tag=f"approval-{sid}" if sid else None)
+    except Exception:
+        logger.debug("gateway web push hook failed for event %s", event, exc_info=True)
+
+
 def _run_gateway_chat_streaming(
     session_id,
     msg_text,
@@ -537,6 +574,11 @@ def _run_gateway_chat_streaming(
             q.put_nowait(queue_item)
         except Exception:
             logger.debug("Failed to put gateway event to queue")
+        # #3196: gateway-mode chat runs through this module, NOT the in-process
+        # streaming path, so streaming.py's Web Push hooks never fire here. Mirror
+        # them for terminal events (response ready / run failed / approval needed).
+        # Gated + never raises; cancel-suppressed 'done' already returned above.
+        _maybe_gateway_push(event, data, session_id, stream_id)
 
     s = None
     final_text = ""

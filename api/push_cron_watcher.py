@@ -68,8 +68,40 @@ def _list_completions() -> list:
             "status": job.get("last_status", "unknown"),
             "completed_at": ts,
             "toast_notifications": job.get("toast_notifications") is not False,
+            "last_error": str(job.get("last_error") or "").strip(),
         })
     return out
+
+
+def _cron_session_id(job_id: str) -> str:
+    """Newest persisted cron session id for a job (``cron_{job_id}_{ts}``), or ''.
+
+    Lets the push deep-link land on the actual run instead of the home view.
+    Best-effort: returns '' on any lookup failure.
+    """
+    try:
+        from api.routes import _latest_cron_session_info_for_jobs
+        info = _latest_cron_session_info_for_jobs([job_id], [job_id]) or {}
+        return str((info.get(job_id) or {}).get("session_id") or "")
+    except Exception:
+        logger.debug("cron push watcher: session lookup failed", exc_info=True)
+        return ""
+
+
+def _cron_output_snippet(session_id: str) -> str:
+    """Short preview of the cron run's last assistant message, or ''."""
+    if not session_id:
+        return ""
+    try:
+        from api.models import get_session
+        from api.streaming import _last_assistant_snippet
+        session = get_session(session_id)
+        if session is None:
+            return ""
+        return _last_assistant_snippet(session)
+    except Exception:
+        logger.debug("cron push watcher: snippet build failed", exc_info=True)
+        return ""
 
 
 def _tick() -> None:
@@ -104,9 +136,16 @@ def _tick() -> None:
             name = c.get("name") or "Cron job"
             status = str(c.get("status") or "").strip().lower()
             ok = status not in ("failed", "error", "timeout")
+            sid = _cron_session_id(job_id)
+            url = f"./session/{sid}" if sid else "./"
             title = f"Cron complete: {name}" if ok else f"Cron failed: {name}"
-            body = "Scheduled task finished." if ok else "Scheduled task ended with an error."
-            url = f"./session/{c.get('session_id', '')}" if c.get("session_id") else "./"
+            if ok:
+                # Prefer the run's actual output; fall back to a generic line.
+                body = _cron_output_snippet(sid) or "Scheduled task finished."
+            else:
+                err = str(c.get("last_error") or "").strip()
+                err = " ".join(err.split())
+                body = (err[:140] + ("…" if len(err) > 140 else "")) if err else "Scheduled task ended with an error."
             try:
                 send_web_push_to_all(title, body, url, tag=f"cron-{job_id}")
             except Exception:
