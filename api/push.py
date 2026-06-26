@@ -91,6 +91,34 @@ def _b64_private_from_vapid(vapid) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 
 
+def _write_secret_json(path, obj) -> None:
+    """Write JSON to ``path`` atomically with owner-only (0600) permissions.
+
+    Both files this guards are sensitive: ``vapid_keys.json`` holds the private
+    key (which can forge pushes to every subscriber) and ``push_subscriptions``
+    carries per-client push-auth secrets. Create with mode 0600 from the start
+    (via ``os.open``) so the file is never briefly world-readable, write to a
+    temp file, then atomically replace.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(obj, f, indent=2)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    os.replace(tmp, path)
+    try:
+        os.chmod(path, 0o600)  # enforce perms even if the file pre-existed looser
+    except OSError:
+        logger.debug("Could not chmod %s to 0600", path, exc_info=True)
+
+
 def _load_or_create_keys() -> dict:
     """Return the active VAPID keypair as {'public','private'}.
 
@@ -114,8 +142,7 @@ def _load_or_create_keys() -> dict:
 
         try:
             keys = _generate_vapid_keypair()
-            VAPID_KEYS_FILE.parent.mkdir(parents=True, exist_ok=True)
-            VAPID_KEYS_FILE.write_text(json.dumps(keys, indent=2), encoding="utf-8")
+            _write_secret_json(VAPID_KEYS_FILE, keys)
             return keys
         except Exception:
             logger.warning("Failed to generate/persist VAPID keys", exc_info=True)
@@ -146,8 +173,7 @@ def _load_subscriptions() -> list:
 
 
 def _save_subscriptions(subs: list) -> None:
-    PUSH_SUBSCRIPTIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    PUSH_SUBSCRIPTIONS_FILE.write_text(json.dumps(subs, indent=2), encoding="utf-8")
+    _write_secret_json(PUSH_SUBSCRIPTIONS_FILE, subs)
 
 
 def _endpoint(sub) -> str:

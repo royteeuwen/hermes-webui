@@ -10,4 +10,4 @@ pyyaml>=6.0
 cryptography>=42.0
 # Web Push (VAPID) background notifications (#3196). Gated behind
 # HERMES_WEBUI_PUSH_ENABLED (default off); pulls in py_vapid for key handling.
-pywebpush>=2.0
+pywebpush>=2.0,<3

@@ -276,6 +276,29 @@ def test_disabled_is_strict_noop(push_module, tmp_path):
     assert not (tmp_path / "vapid_keys.json").exists()
 
 
+def test_secret_files_are_owner_only(monkeypatch, tmp_path):
+    """VAPID private key + subscription store must be 0600, never world-readable."""
+    if os.name != "posix":
+        pytest.skip("POSIX file modes only")
+    monkeypatch.setenv("HERMES_WEBUI_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("HERMES_WEBUI_PUSH_ENABLED", "1")
+    import api.paths
+    importlib.reload(api.paths)
+    import api.push
+    mod = importlib.reload(api.push)
+    try:
+        assert mod.get_vapid_public_key()                       # triggers key persist
+        assert mod.add_subscription({"endpoint": "https://example/abc", "keys": {}}) is True
+        for name in ("vapid_keys.json", "push_subscriptions.json"):
+            f = tmp_path / name
+            assert f.exists(), name
+            assert (f.stat().st_mode & 0o777) == 0o600, f"{name} is {oct(f.stat().st_mode & 0o777)}"
+    finally:
+        monkeypatch.undo()
+        importlib.reload(api.paths)
+        importlib.reload(api.push)
+
+
 def test_enabled_stores_subscription_without_sending(monkeypatch, tmp_path):
     monkeypatch.setenv("HERMES_WEBUI_STATE_DIR", str(tmp_path))
     monkeypatch.setenv("HERMES_WEBUI_PUSH_ENABLED", "1")
