@@ -37,7 +37,17 @@ def test_sw_registers_push_listener_before_notificationclick():
     push_idx = SW_JS.index("self.addEventListener('push'")
     click_idx = SW_JS.index("self.addEventListener('notificationclick'")
     assert push_idx < click_idx
-    assert "event.waitUntil(self.registration.showNotification(title, options))" in SW_JS
+    assert "self.registration.showNotification(title, options)" in SW_JS
+
+
+def test_sw_push_suppressed_when_app_is_on_screen():
+    handler = SW_JS[SW_JS.index("self.addEventListener('push'"):]
+    handler = handler[: handler.index("self.addEventListener('notificationclick'")]
+    # Must check for a focused/visible window before showing an OS notification,
+    # and bail out (return) without showing one when the app is on screen.
+    assert "self.clients.matchAll" in handler
+    assert "focused" in handler and "visibilityState" in handler
+    assert "return;" in handler
 
 
 def test_sw_push_builds_data_url_shape_for_clickthrough():

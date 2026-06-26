@@ -195,7 +195,20 @@ self.addEventListener('push', (event) => {
     badge: 'static/favicon-32.png',
     data: { url },
   };
-  event.waitUntil(self.registration.showNotification(title, options));
+  event.waitUntil((async () => {
+    // Only raise an OS notification when the app is NOT on screen. If a window
+    // is focused or visible, the user is already in the app and sees the update
+    // live — surfacing a push then is redundant and noisy. Spec-compliant: the
+    // Push API allows suppressing the notification when a client is visible.
+    // Hand the payload to the open page so it can show an in-app cue instead.
+    const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const onScreen = wins.some((c) => c.focused || c.visibilityState === 'visible');
+    if (onScreen) {
+      wins.forEach((c) => c.postMessage({ type: 'push', payload }));
+      return;
+    }
+    await self.registration.showNotification(title, options);
+  })());
 });
 
 
