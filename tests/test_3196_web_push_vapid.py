@@ -59,6 +59,23 @@ def test_sw_push_builds_data_url_shape_for_clickthrough():
     assert "badge: 'static/favicon-32.png'" in handler
 
 
+def test_notificationclick_switches_in_place_not_full_reload():
+    handler = SW_JS[SW_JS.index("self.addEventListener('notificationclick'"):]
+    # Open app: focus + postMessage a navigate instruction. Must NOT call
+    # client.navigate(targetUrl) — that full SPA reload flashes the home view
+    # before the session renders (the reported UX bug).
+    assert "postMessage({ type: 'navigate'" in handler
+    assert ".navigate(targetUrl)" not in handler
+
+
+def test_client_handles_in_place_navigate_message():
+    # messages.js listens for the SW navigate message and switches sessions via
+    # the client-side router (loadSession), not a reload.
+    assert "addEventListener('message'" in MESSAGES_JS
+    assert "'navigate'" in MESSAGES_JS
+    assert "loadSession(sid)" in MESSAGES_JS
+
+
 # ── Client subscribe/unsubscribe ──────────────────────────────────────────────
 
 def test_messages_js_has_subscribe_helpers():

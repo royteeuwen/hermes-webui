@@ -6189,6 +6189,30 @@ function _showPwaNotification(title,body,options={}){
   }
   return Promise.resolve(direct());
 }
+// Notification deep-link (in-place): when a push is tapped and the PWA is already
+// open, the service worker focuses this window and posts {type:'navigate',url}
+// instead of reloading. Switch sessions through the client-side router so the SPA
+// is not rebooted (which would flash the default/home view before the session
+// loads). Hard-nav fallback if the router is unavailable. Registered once.
+if(typeof navigator!=='undefined'&&navigator.serviceWorker&&!window.__hermesPushNavWired){
+  window.__hermesPushNavWired=true;
+  navigator.serviceWorker.addEventListener('message',(event)=>{
+    const data=(event&&event.data)||{};
+    if(data.type!=='navigate'||!data.url) return;
+    let sid=null;
+    try{
+      const p=new URL(data.url,location.href).pathname;
+      const i=p.indexOf('/session/');
+      if(i>=0) sid=decodeURIComponent(p.slice(i+'/session/'.length).split('/')[0]);
+    }catch(_e){}
+    if(sid&&typeof loadSession==='function'){
+      try{history.replaceState({},'',data.url);}catch(_e){}
+      Promise.resolve(loadSession(sid)).catch(()=>{try{location.href=data.url;}catch(_e2){}});
+    }else{
+      try{location.href=data.url;}catch(_e){}
+    }
+  });
+}
 function requestNotificationPermission(){
   if(!('Notification' in window)){
     if(typeof showToast==='function') showToast(t('notifications_unsupported'),3000,'error');

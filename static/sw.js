@@ -235,11 +235,20 @@ self.addEventListener('notificationclick', (event) => {
       const openNotificationWindow = () => (
         self.clients.openWindow ? self.clients.openWindow(targetUrl) : undefined
       );
-      const focusableClient = clientList.find((client) => sameOrigin(client.url) && 'focus' in client && 'navigate' in client);
-      if (focusableClient && 'navigate' in focusableClient) {
-        return focusableClient.navigate(targetUrl)
-          .then((client) => (client && 'focus' in client ? client.focus() : focusableClient.focus()))
-          .catch(() => focusableClient.focus());
+      // App already open on a different path: focus it and ask the page to switch
+      // sessions IN-PLACE via its client-side router (postMessage below). Do NOT
+      // use client.navigate() here — that does a full SPA reload, which paints the
+      // default/empty view for a couple of seconds before the session renders
+      // (the "opens home first, then redirects" bug). The page handles the message
+      // and falls back to a hard nav if its router isn't available.
+      const focusableClient = clientList.find((client) => sameOrigin(client.url) && 'focus' in client);
+      if (focusableClient) {
+        const tellToNavigate = (client) => {
+          const c = client || focusableClient;
+          try { c.postMessage({ type: 'navigate', url: targetUrl }); } catch (_e) {}
+          return c;
+        };
+        return Promise.resolve(focusableClient.focus()).then(tellToNavigate).catch(() => tellToNavigate(focusableClient));
       }
       return openNotificationWindow();
     })
