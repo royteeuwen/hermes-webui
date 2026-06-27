@@ -6207,6 +6207,15 @@ if(typeof navigator!=='undefined'&&navigator.serviceWorker&&!window.__hermesPush
     }catch(_e){}
     if(sid&&typeof loadSession==='function'){
       try{history.replaceState({},'',data.url);}catch(_e){}
+      // Hide the home/empty view and show the loading state IMMEDIATELY so the tap
+      // doesn't flash the home screen while loadSession() fetches the conversation
+      // (loadSession otherwise only hides #emptyState once renderMessages runs,
+      // i.e. after the network round-trip).
+      try{
+        const _es=document.getElementById('emptyState'); if(_es) _es.style.display='none';
+        const _mi=document.getElementById('msgInner');
+        if(_mi&&!_mi.innerHTML.trim()) _mi.innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);font-size:14px;padding:40px;text-align:center;">Loading conversation…</div>';
+      }catch(_e){}
       Promise.resolve(loadSession(sid)).catch(()=>{try{location.href=data.url;}catch(_e2){}});
     }else{
       try{location.href=data.url;}catch(_e){}
