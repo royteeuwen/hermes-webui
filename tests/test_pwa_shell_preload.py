@@ -110,3 +110,17 @@ def test_main_render_blocking_js_still_deferred():
         i = html.index(marker)
         tag = html[html.rindex("<script", 0, i):html.index(">", i) + 1]
         assert "defer" in tag, f"{mod} must stay deferred"
+
+
+def test_boot_cover_is_full_viewport_and_content_gated():
+    """The cold-launch cover must be a solid, full-viewport overlay held until
+    real content renders — so an iOS notification launch (forced to start_url)
+    never visibly flashes the home before forwarding to the session."""
+    html = INDEX.read_text(encoding="utf-8")
+    # full-viewport SOLID cover (not the half-transparent --main-bg token)
+    assert "#shellBootSpinner{position:fixed;inset:0" in html
+    assert "background:#0D0D1A;}" in html
+    # reveal is gated on real content + a grace + a hard fallback, NOT just DOMContentLoaded
+    assert "Loading conversation" in html         # session-render gate
+    assert "getComputedStyle(es).display!=='none'" in html  # home-after-grace gate
+    assert "setTimeout(reveal,3000)" in html       # hard fallback

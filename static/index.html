@@ -119,7 +119,12 @@
   /* Shell boot spinner: a centered, theme-aware loading state in the main pane
      while the deferred JS boots. Removed on window load (see inline script in
      <head>). aria-hidden + reduced-motion friendly. */
-  #shellBootSpinner{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;}
+  /* Full-viewport dark cover (matches the iOS launch splash background) so the
+     start_url home — sidebar included — is never visible during a cold launch;
+     it lifts only once real content is ready (see reveal script in <head>). On
+     iOS a notification cold-launch is forced to start_url, so we render home
+     UNDER this cover and forward to the session before lifting it. */
+  #shellBootSpinner{position:fixed;inset:0;z-index:2147483646;display:flex;align-items:center;justify-content:center;pointer-events:none;background:#0D0D1A;}
   #shellBootSpinner::after{content:"";width:28px;height:28px;border-radius:50%;border:2px solid var(--border);border-top-color:var(--muted);animation:shell-boot-spin .8s linear infinite;}
   @keyframes shell-boot-spin{to{transform:rotate(360deg);}}
   @media(prefers-reduced-motion:reduce){#shellBootSpinner::after{animation:none;}}
@@ -154,18 +159,35 @@
   <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js" integrity="sha384-/nfmYPUzWMS6v2atn8hbljz7NE0EI1iGx34lJaNzyVjWGDzMv+ciUZUeJpKA3Glc" crossorigin="anonymous" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js" integrity="sha384-AQLWHRKAgdTxkolJcLOELg4E9rE89CPE2xMy3tIRFn08NcGKPTsELdvKomqji+DL" crossorigin="anonymous" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/xterm-addon-web-links@0.9.0/lib/xterm-addon-web-links.js" integrity="sha384-U4fBROT3kCM582gaYiNaOSQiJbXPzd9SfR1598Y7yeGSYVBzikXrNg0XyuU+mOnl" crossorigin="anonymous" defer></script>
-  <!-- Reveal the real shell / hide the cold-launch spinner once the deferred
-       boot scripts have run. DOMContentLoaded fires after all `defer` scripts
-       execute (boot.js included), so the initial view is rendered by then;
-       `load` is a belt-and-braces fallback. Toggling a single attribute keeps
-       this decoupled from any specific boot function. -->
+  <!-- Lift the full-viewport dark cover only once the main view has REAL content
+       for this launch — not merely at DOMContentLoaded. This is what hides the
+       start_url home on an iOS notification cold-launch (iOS forces start_url and
+       ignores the notification URL): home renders under the cover, the SW posts
+       the deep link, loadSession runs, and we lift the cover when the conversation
+       renders — so home is never seen. Decoupled from boot internals via the DOM:
+        - a session's messages rendered  -> lift immediately
+        - the empty/home view shown      -> lift after a short grace (a pending
+          notification navigate supersedes it by then)
+        - hard 3s fallback               -> never get stuck on the cover -->
   <script>
     (function(){
-      var done=false;
-      function reveal(){if(done)return;done=true;try{document.documentElement.setAttribute('data-shell-ready','1');}catch(_){}}
-      if(document.readyState==='interactive'||document.readyState==='complete'){reveal();}
-      else{document.addEventListener('DOMContentLoaded',reveal,{once:true});}
-      window.addEventListener('load',reveal,{once:true});
+      var done=false,t0=Date.now(),iv=null;
+      function reveal(){if(done)return;done=true;if(iv)clearInterval(iv);try{document.documentElement.setAttribute('data-shell-ready','1');}catch(_){}}
+      function ready(){
+        if(done)return;
+        var mi=document.getElementById('msgInner');
+        if(mi&&mi.children.length>0&&(mi.textContent||'').indexOf('Loading conversation')===-1){reveal();return;}
+        var es=document.getElementById('emptyState');
+        if(es&&getComputedStyle(es).display!=='none'&&(Date.now()-t0)>500){reveal();return;}
+      }
+      function start(){
+        var root=document.querySelector('main')||document.body;
+        try{new MutationObserver(ready).observe(root,{childList:true,subtree:true,attributes:true,attributeFilter:['style']});}catch(_){}
+        iv=setInterval(ready,150);
+        ready();
+      }
+      if(document.readyState!=='loading')start();else document.addEventListener('DOMContentLoaded',start,{once:true});
+      setTimeout(reveal,3000);
     })();
   </script>
   <!-- PWA service worker registration -->
