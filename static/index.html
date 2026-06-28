@@ -30,8 +30,10 @@
 <script src="static/pwa-startup.js?v=__WEBUI_VERSION__"></script>
 <script>window.__HERMES_CONFIG__={maxUploadBytes:__MAX_UPLOAD_BYTES__,csrfToken:__CSRF_TOKEN_JSON__};</script>
 <script>(function(){
-  var cfg=window.__HERMES_CONFIG__||{},token=cfg.csrfToken||'';
-  if(!token||!window.fetch)return;
+  if(!window.fetch)return;
+  if(!window.__HERMES_CONFIG__)window.__HERMES_CONFIG__={};
+  // Read the token LIVE each call (not captured once) so a refresh takes effect.
+  function getToken(){return (window.__HERMES_CONFIG__&&window.__HERMES_CONFIG__.csrfToken)||'';}
   var originalFetch=window.fetch.bind(window);
   function sameOriginUnsafe(input,init){
     var method=((init&&init.method)||(input&&input.method)||'GET').toUpperCase();
@@ -43,22 +45,32 @@
       return !/\/api\/(auth\/login|csp-report)$/.test(url.pathname);
     }catch(_){return false;}
   }
+  function withToken(input,init,token){
+    var opts=init?Object.assign({},init):{};
+    var headers=new Headers(opts.headers!==undefined?opts.headers:((input&&input.headers)||{}));
+    headers.set('X-Hermes-CSRF-Token',token);
+    opts.headers=headers;
+    return opts;
+  }
   window.fetch=function(input,init){
-    if(sameOriginUnsafe(input,init)){
-      var opts=init?Object.assign({},init):{};
-      var headers=new Headers(opts.headers!==undefined?opts.headers:((input&&input.headers)||{}));
-      if(!headers.has('X-Hermes-CSRF-Token'))headers.set('X-Hermes-CSRF-Token',token);
-      opts.headers=headers;
-      return originalFetch(input,opts);
-    }
-    return originalFetch(input,init);
+    if(!sameOriginUnsafe(input,init))return originalFetch(input,init);
+    return originalFetch(input,withToken(input,init,getToken()));
   };
+  // Self-heal stale CSRF: the token baked into a cached app-shell can be stale
+  // after a re-login. On boot, refresh it from the server (a safe GET that needs
+  // no token, absolute path so it works on /session/<id> deep links too) and
+  // store it on the config; getToken() above reads it live, so mutating requests
+  // pick up the fresh token without a reload. Fires once, before user actions.
+  originalFetch('/api/auth/status',{credentials:'include'})
+    .then(function(r){return r.ok?r.json():null;})
+    .then(function(d){if(d&&d.csrf)window.__HERMES_CONFIG__.csrfToken=d.csrf;})
+    .catch(function(){});
   if(navigator.sendBeacon){
     var originalBeacon=navigator.sendBeacon.bind(navigator);
     navigator.sendBeacon=function(url,data){
       try{
         if(sameOriginUnsafe(url,{method:'POST'})){
-          var headers={'X-Hermes-CSRF-Token':token};
+          var headers={'X-Hermes-CSRF-Token':getToken()};
           if(data&&data.type)headers['Content-Type']=data.type;
           originalFetch(url,{method:'POST',credentials:'include',headers:headers,body:data,keepalive:true});
           return true;

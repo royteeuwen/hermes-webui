@@ -8715,15 +8715,24 @@ def handle_get(handler, parsed) -> bool:
 
         logged_in = False
         auth_enabled = is_auth_enabled()
+        csrf = ""
         if auth_enabled:
             cv = parse_cookie(handler)
             logged_in = bool(cv and verify_session(cv))
+            # Expose the live CSRF token for the current session so a client
+            # booting from a cached (app-shell) index.html — whose inlined token
+            # may be stale after a re-login — can refresh it without a full
+            # reload. Only for an authenticated session; never for anon callers.
+            if logged_in:
+                from api.auth import csrf_token_for_session
+                csrf = csrf_token_for_session(cv) or ""
         passkey_flag = _passkey_feature_flag_enabled()
         passkeys = registered_credentials() if passkey_flag else []
         password_auth_enabled = get_password_hash() is not None
         return j(handler, {
             "auth_enabled": auth_enabled,
             "logged_in": logged_in,
+            "csrf": csrf,
             "password_auth_enabled": password_auth_enabled,
             "passwordless_enabled": bool(passkeys) and not password_auth_enabled,
             "passkeys_enabled": bool(passkeys),
