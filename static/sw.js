@@ -115,31 +115,58 @@ self.addEventListener('fetch', (event) => {
     return; // let browser handle normally
   }
 
-  // Page navigations must be network-first. A stale cached './' response can
-  // otherwise hide the server's 302-to-login after auth expiry, or ignore a
-  // freshly set login cookie until the user manually refreshes.
+  // Page navigations: app-shell, stale-while-revalidate. Serving the cached
+  // shell INSTANTLY (its inlined critical CSS paints the framed skeleton with
+  // zero network wait — the app-shell JS is cached too) is what removes the
+  // 1-2s white screen on a cold PWA launch over a slow link; the network copy
+  // refreshes the cache in the background for next time.
+  //
+  // Safety: we only ever cache/serve the authenticated APP SHELL, never the
+  // login page — gated on the `id="critical-shell"` marker, which exists only
+  // in the app shell. So a freshly-set login cookie or a 302-to-login (auth
+  // expiry) is never masked by a cached login page, and password submits hit
+  // the network. Stale shell + a still-valid session reuses the same CSRF token
+  // (it's session-derived); the rare just-after-re-login launch may need one
+  // refresh until the background revalidate updates the cached shell.
   if (event.request.mode === 'navigate') {
-    event.respondWith(
-      fetch(new Request(event.request, { cache: 'no-store' })).then((response) => {
-        if (
-          event.request.method === 'GET' &&
-          response.status === 200 &&
-          !response.redirected
-        ) {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put('./', clone));
-        }
-        return response;
-      }).catch(() => {
-        return caches.match('./').then((cached) => cached || new Response(
-          '<html><body style="font-family:sans-serif;padding:2rem;background:#1a1a1a;color:#ccc">' +
-          '<h2>You are offline</h2>' +
-          '<p>Hermes requires a server connection. Please check your network and try again.</p>' +
-          '</body></html>',
-          { headers: { 'Content-Type': 'text/html' } }
-        ));
-      })
-    );
+    event.respondWith((async () => {
+      const cache = await caches.open(CACHE_NAME);
+      const cachedShell = await cache.match('./');
+
+      const revalidate = fetch(new Request(event.request, { cache: 'no-store' }))
+        .then(async (response) => {
+          if (
+            event.request.method === 'GET' &&
+            response.status === 200 &&
+            !response.redirected
+          ) {
+            const body = await response.clone().text();
+            if (body.indexOf('id="critical-shell"') !== -1) {
+              await cache.put('./', new Response(body, {
+                status: 200,
+                headers: { 'Content-Type': 'text/html; charset=utf-8' },
+              }));
+            }
+          }
+          return response;
+        })
+        .catch(() => null);
+
+      if (cachedShell) {
+        event.waitUntil(revalidate);   // refresh in background; paint now
+        return cachedShell;
+      }
+      // No shell cached yet (first launch / just after a version bump): use the
+      // network, then fall back to any cached shell, then the offline page.
+      const fresh = await revalidate;
+      return fresh || (await cache.match('./')) || new Response(
+        '<html><body style="font-family:sans-serif;padding:2rem;background:#1a1a1a;color:#ccc">' +
+        '<h2>You are offline</h2>' +
+        '<p>Hermes requires a server connection. Please check your network and try again.</p>' +
+        '</body></html>',
+        { headers: { 'Content-Type': 'text/html' } }
+      );
+    })());
     return;
   }
 
