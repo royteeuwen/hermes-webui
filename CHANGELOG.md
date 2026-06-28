@@ -3,6 +3,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Cold PWA launches now paint a framed app-shell skeleton with a loading spinner almost immediately, instead of a blank white screen.** A minimal critical app-shell stylesheet (titlebar + rail + sidebar + main, with both light and dark palette vars) is inlined in `<head>` before the render-blocking `style.css`, so the browser can paint the shell on first paint while the deferred boot scripts run; the spinner is removed once boot completes. The terminal CDN stylesheet (`xterm.css`) is now loaded non-render-blocking (it is only needed when a terminal opens), removing it from the first-paint critical path. No build step, no new dependencies, and no change to app behavior; the shell DOM and all app-shell JS modules are unchanged (the JS stays deferred). Critical-CSS geometry mirrors `style.css` to avoid layout shift.
+
 ## [v0.51.564] — 2026-06-21 — Release TW (loopback sidecar diagnostics)
 
 ### Added

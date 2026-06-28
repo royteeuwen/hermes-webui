@@ -68,8 +68,43 @@
     };
   }
 })()</script>
+<!-- Critical app-shell CSS, inlined so the framed shell (titlebar + rail +
+     sidebar + main) and a centered loading spinner paint on FIRST paint,
+     before the render-blocking style.css below arrives. This kills the
+     cold-launch white screen (#3196 follow-up). Values MUST mirror the
+     matching rules in style.css so there is no layout shift / CLS when the
+     full stylesheet takes over. The shell DOM already lives in <body>; we only
+     need enough CSS to lay it out and avoid an unstyled / blank flash.
+     Color vars are duplicated here (light + dark) because var(--*) is not yet
+     defined until style.css loads; the inline head theme script has already
+     set the .dark class, so the right palette applies immediately. -->
+<style id="critical-shell">
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+  :root{--bg:#FEFCF7;--sidebar:#FAF7F0;--border:#E0D8C8;--muted:#5C5344;--main-bg:rgba(254,252,247,0.5);}
+  :root.dark{--bg:#0D0D1A;--sidebar:#141425;--border:#2A2A45;--muted:#C0C0C0;--main-bg:rgba(13,13,26,0.5);}
+  html{background:var(--sidebar);}
+  body{background:var(--bg);color:var(--muted);height:100vh;height:100dvh;overflow:hidden;display:flex;flex-direction:column;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;}
+  .app-titlebar{height:38px;flex-shrink:0;background:var(--sidebar);border-bottom:1px solid var(--border);}
+  .layout{display:flex;width:100%;flex:1 1 auto;min-height:0;}
+  .rail{display:none;width:48px;flex-shrink:0;background:var(--sidebar);border-right:1px solid var(--border);}
+  .sidebar{width:300px;flex-shrink:0;background:var(--sidebar);border-right:1px solid var(--border);}
+  .main{flex:1;min-width:0;min-height:0;background:var(--main-bg);position:relative;}
+  @media(min-width:641px){.rail{display:block;}}
+  /* Shell boot spinner: a centered, theme-aware loading state in the main pane
+     while the deferred JS boots. Removed on window load (see inline script in
+     <head>). aria-hidden + reduced-motion friendly. */
+  #shellBootSpinner{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;}
+  #shellBootSpinner::after{content:"";width:28px;height:28px;border-radius:50%;border:2px solid var(--border);border-top-color:var(--muted);animation:shell-boot-spin .8s linear infinite;}
+  @keyframes shell-boot-spin{to{transform:rotate(360deg);}}
+  @media(prefers-reduced-motion:reduce){#shellBootSpinner::after{animation:none;}}
+  html[data-shell-ready] #shellBootSpinner{display:none;}
+</style>
 <link rel="stylesheet" href="static/style.css?v=__WEBUI_VERSION__">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" integrity="sha384-LJcOxlx9IMbNXDqJ2axpfEQKkAYbFjJfhXexLfiRJhjDU81mzgkiQq8rkV0j6dVh" crossorigin="anonymous">
+  <!-- xterm.css is only needed once a terminal panel is opened; load it
+       non-render-blocking (media=print swap to all onload) so it no longer
+       gates first paint. Falls back to a plain stylesheet link with <noscript>. -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" integrity="sha384-LJcOxlx9IMbNXDqJ2axpfEQKkAYbFjJfhXexLfiRJhjDU81mzgkiQq8rkV0j6dVh" crossorigin="anonymous" media="print" onload="this.media='all'">
+  <noscript><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" integrity="sha384-LJcOxlx9IMbNXDqJ2axpfEQKkAYbFjJfhXexLfiRJhjDU81mzgkiQq8rkV0j6dVh" crossorigin="anonymous"></noscript>
   <!-- KaTeX math rendering CSS (loaded eagerly from vendored assets to prevent font CSP noise) -->
   <link rel="stylesheet" href="static/vendor/katex/0.16.22/katex.min.css">
   <!-- streaming-markdown: incremental DOM-building markdown parser for live streams -->
@@ -93,6 +128,20 @@
   <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js" integrity="sha384-/nfmYPUzWMS6v2atn8hbljz7NE0EI1iGx34lJaNzyVjWGDzMv+ciUZUeJpKA3Glc" crossorigin="anonymous" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js" integrity="sha384-AQLWHRKAgdTxkolJcLOELg4E9rE89CPE2xMy3tIRFn08NcGKPTsELdvKomqji+DL" crossorigin="anonymous" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/xterm-addon-web-links@0.9.0/lib/xterm-addon-web-links.js" integrity="sha384-U4fBROT3kCM582gaYiNaOSQiJbXPzd9SfR1598Y7yeGSYVBzikXrNg0XyuU+mOnl" crossorigin="anonymous" defer></script>
+  <!-- Reveal the real shell / hide the cold-launch spinner once the deferred
+       boot scripts have run. DOMContentLoaded fires after all `defer` scripts
+       execute (boot.js included), so the initial view is rendered by then;
+       `load` is a belt-and-braces fallback. Toggling a single attribute keeps
+       this decoupled from any specific boot function. -->
+  <script>
+    (function(){
+      var done=false;
+      function reveal(){if(done)return;done=true;try{document.documentElement.setAttribute('data-shell-ready','1');}catch(_){}}
+      if(document.readyState==='interactive'||document.readyState==='complete'){reveal();}
+      else{document.addEventListener('DOMContentLoaded',reveal,{once:true});}
+      window.addEventListener('load',reveal,{once:true});
+    })();
+  </script>
   <!-- PWA service worker registration -->
   <script>
     if ('serviceWorker' in navigator) {
@@ -395,6 +444,9 @@
   <div class="resize-handle" id="sidebarResize"></div>
   </aside>
   <main class="main">
+    <!-- Cold-launch loading state: shown by critical-shell CSS until the
+         deferred JS boots, then removed on window load (head script). -->
+    <div id="shellBootSpinner" aria-hidden="true"></div>
     <div class="update-banner" id="updateBanner">
       <div style="display:flex;flex-direction:column;flex:1;min-width:0">
         <span id="updateMsg"></span>
