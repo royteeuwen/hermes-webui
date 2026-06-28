@@ -250,8 +250,19 @@ self.addEventListener('notificationclick', (event) => {
   const sameOrigin = (clientUrl) => {
     try { return new URL(clientUrl).origin === self.location.origin; } catch (_e) { return false; }
   };
+  // Persist a launch marker FIRST. notificationclick fires at launch (early), but
+  // on a COLD iOS launch the OS forces start_url and the in-place navigate
+  // postMessage below can arrive 1-2s later — long enough that the page's boot
+  // cover would otherwise lift on the home/empty-state in between (the "flashes
+  // home then redirects" bug). The cover reads this marker at boot and, while it's
+  // present, stays covered until the session itself renders. Stored in the shell
+  // cache so a freshly-launched client can read it before painting home.
+  const writeMarker = caches.open(CACHE_NAME).then((cache) => cache.put(
+    '/__hermes_pending_nav__',
+    new Response(JSON.stringify({ url: targetUrl, ts: Date.now() }), { headers: { 'Content-Type': 'application/json' } })
+  )).catch(() => {});
   event.waitUntil(
-    self.clients.matchAll({type: 'window', includeUncontrolled: true}).then((clientList) => {
+    writeMarker.then(() => self.clients.matchAll({type: 'window', includeUncontrolled: true})).then((clientList) => {
       // Match on pathname, not the full href: _sessionUrlForSid copies the
       // current page's query string + hash into the deep link, so an open tab
       // already on /session/<sid> would fail an exact-href match and spawn a

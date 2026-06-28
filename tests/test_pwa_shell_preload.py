@@ -123,4 +123,21 @@ def test_boot_cover_is_full_viewport_and_content_gated():
     # reveal is gated on real content + a grace + a hard fallback, NOT just DOMContentLoaded
     assert "Loading conversation" in html         # session-render gate
     assert "getComputedStyle(es).display!=='none'" in html  # home-after-grace gate
-    assert "setTimeout(reveal,3000)" in html       # hard fallback
+    assert "},3000)" in html                       # hard fallback fires at 3s
+
+
+def test_notification_launch_holds_cover_until_session():
+    """A notification cold-launch (iOS forces start_url, then forwards via an
+    in-place navigate 1-2s later) must NOT lift the cover on the home/empty-state
+    in between. sw.js writes a launch marker on notificationclick; the cover reads
+    it at boot and, while present, stays covered until the session paints."""
+    html = INDEX.read_text(encoding="utf-8")
+    sw = (REPO_ROOT / "static" / "sw.js").read_text(encoding="utf-8")
+    # SW persists the marker on click, before focusing/opening a window.
+    assert "__hermes_pending_nav__" in sw, "sw.js must write the launch marker"
+    nc = sw[sw.index("addEventListener('notificationclick'"):]
+    assert nc.index("__hermes_pending_nav__") < nc.index("matchAll"), \
+        "marker must be written before the client match/focus logic"
+    # The cover reads the marker and gates the empty-state reveal on it.
+    assert "__hermes_pending_nav__" in html, "cover must read the launch marker"
+    assert "if(notifMode)return;" in html, "empty-state reveal must be gated by notifMode"

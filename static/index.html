@@ -171,23 +171,43 @@
         - hard 3s fallback               -> never get stuck on the cover -->
   <script>
     (function(){
-      var done=false,t0=Date.now(),iv=null;
+      var done=false,t0=Date.now(),iv=null,notifMode=false;
+      var NAV_KEY='/__hermes_pending_nav__';
       function reveal(){if(done)return;done=true;if(iv)clearInterval(iv);try{document.documentElement.setAttribute('data-shell-ready','1');}catch(_){}}
+      // A notification launch leaves a marker (sw.js notificationclick). While it's
+      // present we are mid-forward to a session: the cover must NOT lift on the
+      // home/empty-state — only on the session render — else home flashes for the
+      // 1-2s before the in-place navigate arrives. Consume (delete) it once seen so
+      // an ordinary launch shortly after a notification isn't held hostage.
+      function checkMarker(){
+        if(notifMode||done||!self.caches)return;
+        try{caches.match(NAV_KEY).then(function(r){return r?r.json():null;}).then(function(d){
+          if(d&&(Date.now()-(d.ts||0))<60000){
+            notifMode=true;
+            try{caches.keys().then(function(ks){ks.forEach(function(k){caches.open(k).then(function(c){c.delete(NAV_KEY);});});});}catch(_){}
+          }
+        }).catch(function(){});}catch(_){}
+      }
       function ready(){
         if(done)return;
         var mi=document.getElementById('msgInner');
         if(mi&&mi.children.length>0&&(mi.textContent||'').indexOf('Loading conversation')===-1){reveal();return;}
+        if(notifMode)return; // notification launch: hold the cover until the session paints
         var es=document.getElementById('emptyState');
         if(es&&getComputedStyle(es).display!=='none'&&(Date.now()-t0)>500){reveal();return;}
       }
       function start(){
         var root=document.querySelector('main')||document.body;
         try{new MutationObserver(ready).observe(root,{childList:true,subtree:true,attributes:true,attributeFilter:['style']});}catch(_){}
-        iv=setInterval(ready,150);
-        ready();
+        iv=setInterval(function(){checkMarker();ready();},150);
+        // The SW also posts {type:'navigate'} for a warm tap — that's a notification forward too.
+        try{navigator.serviceWorker.addEventListener('message',function(e){if(e&&e.data&&e.data.type==='navigate')notifMode=true;});}catch(_){}
+        checkMarker();ready();
       }
       if(document.readyState!=='loading')start();else document.addEventListener('DOMContentLoaded',start,{once:true});
-      setTimeout(reveal,3000);
+      // Hard fallback so the cover never sticks. A notification launch waits longer
+      // because it must out-wait a late in-place navigate + the session load.
+      setTimeout(function(){if(notifMode){setTimeout(reveal,4000);}else{reveal();}},3000);
     })();
   </script>
   <!-- PWA service worker registration -->
