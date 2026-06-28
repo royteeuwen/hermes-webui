@@ -14,6 +14,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 SW_JS = (ROOT / "static" / "sw.js").read_text(encoding="utf-8")
 MESSAGES_JS = (ROOT / "static" / "messages.js").read_text(encoding="utf-8")
+SESSIONS_JS = (ROOT / "static" / "sessions.js").read_text(encoding="utf-8")
 INDEX_HTML = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
 BOOT_JS = (ROOT / "static" / "boot.js").read_text(encoding="utf-8")
 PANELS_JS = (ROOT / "static" / "panels.js").read_text(encoding="utf-8")
@@ -74,6 +75,17 @@ def test_client_handles_in_place_navigate_message():
     assert "addEventListener('message'" in MESSAGES_JS
     assert "'navigate'" in MESSAGES_JS
     assert "loadSession(sid)" in MESSAGES_JS
+
+
+def test_loadsession_hides_home_view_before_fetch():
+    # Deep-link (notification tap / refresh on /session/<id>) must not flash the
+    # home/empty view while loadSession() fetches: it hides #emptyState in the
+    # same synchronous block that paints the "Loading conversation..." state,
+    # before the metadata round-trip (renderMessages would otherwise hide it only
+    # after the fetch).
+    i = SESSIONS_JS.index("Loading conversation...")
+    block = SESSIONS_JS[i: i + 800]
+    assert "emptyState" in block and "display = 'none'" in block
 
 
 # ── Client subscribe/unsubscribe ──────────────────────────────────────────────

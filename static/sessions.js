@@ -995,7 +995,14 @@ async function loadSession(sid){
     }
     _loadingOlder = false;
     const _msgInner = $('msgInner');
-    if (_msgInner && currentSid !== sid) _msgInner.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);font-size:14px;padding:40px;text-align:center;">Loading conversation...</div>';
+    if (_msgInner && currentSid !== sid) {
+      _msgInner.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);font-size:14px;padding:40px;text-align:center;">Loading conversation...</div>';
+      // Hide the empty/home view the moment a different session starts loading so
+      // a deep-link (notification tap, refresh on /session/<id>) doesn't flash the
+      // home screen during the metadata fetch. renderMessages() keeps it hidden on
+      // success; the empty-session / not-found paths re-show it explicitly.
+      const _es = $('emptyState'); if (_es) _es.style.display = 'none';
+    }
   }
   // Phase 1: Load metadata only (~1KB) for fast session switching. Keep model
   // resolution out of the first-paint path; old provider-shaped model IDs are
