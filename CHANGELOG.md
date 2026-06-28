@@ -7,6 +7,10 @@
 
 - **Background Web Push notifications (VAPID).** Opt-in, gated behind the `HERMES_WEBUI_PUSH_ENABLED` env var (default off). When enabled, an installed PWA can receive notifications even while the tab/app is closed — covering turn-complete / new assistant reply, run failed, tool-call approval required, and cron-job completion. A new "Background push" toggle lives in Settings under Browser notifications. VAPID keys are generated once into the WebUI state dir (`vapid_keys.json`) or supplied via `HERMES_WEBUI_VAPID_PUBLIC_KEY` / `HERMES_WEBUI_VAPID_PRIVATE_KEY` / `HERMES_WEBUI_VAPID_SUBJECT`; subscriptions persist in `push_subscriptions.json`. When the env var is unset the feature is a strict no-op (no endpoints active, no keys generated, default behavior unchanged). Adds `pywebpush` as a dependency. (#3196)
 
+### Changed
+
+- **Cold PWA launches now paint a framed app-shell skeleton with a loading spinner almost immediately, instead of a blank white screen.** A minimal critical app-shell stylesheet (titlebar + rail + sidebar + main, with both light and dark palette vars) is inlined in `<head>` before the render-blocking `style.css`, so the browser can paint the shell on first paint while the deferred boot scripts run; the spinner is removed once boot completes. The terminal CDN stylesheet (`xterm.css`) is now loaded non-render-blocking (it is only needed when a terminal opens), removing it from the first-paint critical path. No build step, no new dependencies, and no change to app behavior; the shell DOM and all app-shell JS modules are unchanged (the JS stays deferred). Critical-CSS geometry mirrors `style.css` to avoid layout shift.
+
 ## [v0.51.564] — 2026-06-21 — Release TW (loopback sidecar diagnostics)
 
 ### Added
