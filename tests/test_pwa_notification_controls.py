@@ -65,8 +65,12 @@ def test_service_worker_handles_notification_clicks_without_hijacking_other_sess
     assert "targetClient.focus()" in SW_JS
     exact_idx = SW_JS.index("targetClient.focus()")
     open_idx = SW_JS.index("self.clients.openWindow(targetUrl)")
-    navigate_idx = SW_JS.index("focusableClient.navigate(targetUrl)")
+    # App already open on a different path: focus it and ask the page to switch
+    # sessions IN-PLACE via postMessage — NOT client.navigate(), which does a full
+    # SPA reload that flashes the default view before the session renders.
+    navigate_idx = SW_JS.index("postMessage({ type: 'navigate', url: targetUrl })")
     assert exact_idx < open_idx < navigate_idx
+    assert "focusableClient.navigate(targetUrl)" not in SW_JS
 
 
 def test_settings_expose_permission_and_test_controls():
