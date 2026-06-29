@@ -37,22 +37,23 @@ def test_notification_click_navigates_reusable_client_before_opening_window():
     handler = _notification_click_handler()
 
     reusable_idx = handler.index("const focusableClient = clientList.find")
-    navigate_idx = handler.index("focusableClient.navigate(targetUrl)")
+    # In-place switch via postMessage, NOT client.navigate() — the latter does a
+    # full SPA reload that flashes the default view before the session renders.
+    navigate_idx = handler.index("postMessage({ type: 'navigate', url: targetUrl })")
     open_fallback_idx = handler.index("return openNotificationWindow();")
 
-    assert "sameOrigin(client.url) && 'focus' in client && 'navigate' in client" in handler
+    assert "sameOrigin(client.url) && 'focus' in client" in handler
     assert reusable_idx < navigate_idx < open_fallback_idx
-    assert "if (self.clients.openWindow) return self.clients.openWindow(targetUrl)" not in handler
+    assert "focusableClient.navigate(targetUrl)" not in handler  # no SPA-reload navigate
 
 
 def test_notification_click_focuses_after_navigation_or_navigation_failure():
     handler = _notification_click_handler()
 
-    assert (
-        ".then((client) => (client && 'focus' in client ? "
-        "client.focus() : focusableClient.focus()))"
-    ) in handler
-    assert ".catch(() => focusableClient.focus())" in handler
+    # Focus the reusable client, THEN tell it to switch sessions in-place; if the
+    # focus() promise rejects, still post the navigate to the reusable client.
+    assert "Promise.resolve(focusableClient.focus()).then(tellToNavigate)" in handler
+    assert ".catch(() => tellToNavigate(focusableClient))" in handler
 
 
 def test_notification_click_open_window_remains_no_reusable_client_fallback():
@@ -61,7 +62,7 @@ def test_notification_click_open_window_remains_no_reusable_client_fallback():
     assert "const openNotificationWindow = () => (" in handler
     assert "self.clients.openWindow ? self.clients.openWindow(targetUrl) : undefined" in handler
     assert handler.index("return openNotificationWindow();") > handler.index(
-        "focusableClient.navigate(targetUrl)"
+        "postMessage({ type: 'navigate', url: targetUrl })"
     )
 
 
