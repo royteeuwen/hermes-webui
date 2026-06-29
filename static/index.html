@@ -215,6 +215,17 @@
         iv=setInterval(function(){checkMarker();ready();},120);
         try{navigator.serviceWorker.addEventListener('message',function(e){if(e&&e.data&&e.data.type==='navigate'){notifMode=true;log('navigate msg');beacon('navigate-msg');}});}catch(_){}
         checkMarker();ready();
+        // Profiler: log key transitions INDEPENDENT of the cover reveal (the reveal
+        // loop stops on lift, hiding the session-load cost). Each fires once, ~12s.
+        try{var seen={};var pe=function(ev){if(!seen[ev]){seen[ev]=1;log('PROFILE '+ev);beacon(ev);}};
+          var pid=setInterval(function(){
+            var mi2=document.getElementById('msgInner');var es2=document.getElementById('emptyState');
+            if(es2&&getComputedStyle(es2).display!=='none')pe('p-home-visible');
+            if(mi2&&(mi2.textContent||'').indexOf('Loading conversation')!==-1)pe('p-loading-shown');
+            if(mi2&&mi2.children.length>0&&(mi2.textContent||'').indexOf('Loading conversation')===-1)pe('p-session-rendered');
+          },100);
+          setTimeout(function(){clearInterval(pid);},12000);
+        }catch(_){}
         // Local sim: ?coverdebug=1&simnav=<sid>&simdelay=<ms> fires an in-place navigate
         // at a chosen delay to reproduce the iOS late-navigate against real timing.
         try{var sm=location.search.match(/[?&]simnav=([^&]+)/);
