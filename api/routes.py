@@ -11710,18 +11710,6 @@ def handle_post(handler, parsed) -> bool:
         send_web_push_to_all("Hermes test", "Push is working", "./")
         return j(handler, {"ok": True})
 
-    # TEMP launch profiling (#3196): page + service worker post timestamped marks
-    # here so a real iOS notification cold-launch can be measured end to end. Logged
-    # with the server receive time so SW (Date.now) and page marks can be aligned.
-    # Remove once the forward latency is understood + fixed.
-    if parsed.path == "/api/debug/cover-beacon":
-        try:
-            d = body if isinstance(body, dict) else {}
-            logger.warning("COVER-BEACON recv_ms=%d %s", int(time.time() * 1000), json.dumps(d, separators=(",", ":")))
-        except Exception:
-            pass
-        return j(handler, {"ok": True})
-
     if parsed.path == "/api/onboarding/oauth/start":
         if not _onboarding_gate_allows(handler):
             return bad(handler, "Onboarding OAuth is only available from local networks when auth is not enabled. To bypass this on a remote server, set HERMES_WEBUI_ONBOARDING_OPEN=1.", 403)

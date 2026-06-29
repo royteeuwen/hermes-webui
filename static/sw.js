@@ -191,21 +191,6 @@ self.addEventListener('fetch', (event) => {
 // data:{url} shape the notificationclick handler reads below, so click-to-focus
 // reuses the existing tab-matching logic unchanged. Option keys mirror
 // messages.js _notificationOptions().
-// TEMP launch profiling (#3196): post a timestamped mark to the server so a real
-// iOS cold-launch can be measured end to end (paired with the page beacons).
-function swBeacon(ev, extra) {
-  // Return the fetch promise so callers can hold the SW alive via event.waitUntil
-  // — a fire-and-forget fetch gets killed when iOS terminates the SW after the
-  // handler returns, which is why push/click marks were going missing.
-  try {
-    return fetch('/api/debug/cover-beacon', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(Object.assign({ src: 'sw', ev: ev, t: Date.now() }, extra || {})),
-    }).catch(() => {});
-  } catch (_e) { return Promise.resolve(); }
-}
-
 self.addEventListener('push', (event) => {
   let payload = {};
   try {
@@ -231,7 +216,6 @@ self.addEventListener('push', (event) => {
     // Hand the payload to the open page so it can show an in-app cue instead.
     const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     const onScreen = wins.some((c) => c.focused || c.visibilityState === 'visible');
-    await swBeacon('push-received', { onScreen: onScreen, url: payload.url || '' });
     if (onScreen) {
       wins.forEach((c) => c.postMessage({ type: 'push', payload }));
       return;
@@ -243,7 +227,6 @@ self.addEventListener('push', (event) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const clickBeacon = swBeacon('notificationclick', { url: (event.notification.data && event.notification.data.url) || '' });
   const rawUrl = (event.notification.data && event.notification.data.url) || './';
   const targetUrl = new URL(rawUrl, self.registration.scope || './').href;
   const targetPath = new URL(targetUrl).pathname;
@@ -260,10 +243,10 @@ self.addEventListener('notificationclick', (event) => {
   // home then redirects" bug). The cover reads this marker at boot and, while it's
   // present, stays covered until the session itself renders. Stored in the shell
   // cache so a freshly-launched client can read it before painting home.
-  const writeMarker = Promise.all([clickBeacon, caches.open(CACHE_NAME).then((cache) => cache.put(
+  const writeMarker = caches.open(CACHE_NAME).then((cache) => cache.put(
     '/__hermes_pending_nav__',
     new Response(JSON.stringify({ url: targetUrl, ts: Date.now() }), { headers: { 'Content-Type': 'application/json' } })
-  ))]).catch(() => {});
+  )).catch(() => {});
   event.waitUntil(
     writeMarker.then(() => self.clients.matchAll({type: 'window', includeUncontrolled: true})).then((clientList) => {
       // Match on pathname, not the full href: _sessionUrlForSid copies the
