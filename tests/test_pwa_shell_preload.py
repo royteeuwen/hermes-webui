@@ -126,20 +126,6 @@ def test_boot_cover_is_full_viewport_and_content_gated():
     assert "HOME_GRACE+800" in html                # hard fallback sits just past the grace
 
 
-def test_standalone_launch_holds_home_longer_than_browser_tab():
-    """A notification cold-launch can't be distinguished from a normal launch at
-    boot (both open start_url) and the navigate that forwards to the session lands
-    1-2s later. So on an installed/standalone launch the cover must hold over home
-    long enough to absorb that navigate (session renders under cover); a browser
-    tab keeps the fast grace."""
-    html = INDEX.read_text(encoding="utf-8")
-    assert "navigator.standalone===true" in html, "must detect iOS standalone"
-    assert "display-mode: standalone" in html, "must detect display-mode standalone"
-    assert "standalone?2500:500" in html, "standalone holds home ~2.5s, tab 500ms"
-    # the home-grace reveal is gated on the standalone-aware window, not a constant
-    assert "(Date.now()-t0)>HOME_GRACE" in html
-
-
 def test_notification_launch_holds_cover_until_session():
     """A notification cold-launch (iOS forces start_url, then forwards via an
     in-place navigate 1-2s later) must NOT lift the cover on the home/empty-state

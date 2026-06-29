@@ -205,6 +205,18 @@ self.addEventListener('fetch', (event) => {
 // data:{url} shape the notificationclick handler reads below, so click-to-focus
 // reuses the existing tab-matching logic unchanged. Option keys mirror
 // messages.js _notificationOptions().
+// TEMP launch profiling (#3196): post a timestamped mark to the server so a real
+// iOS cold-launch can be measured end to end (paired with the page beacons).
+function swBeacon(ev, extra) {
+  try {
+    fetch('/api/debug/cover-beacon', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.assign({ src: 'sw', ev: ev, t: Date.now() }, extra || {})),
+    }).catch(() => {});
+  } catch (_e) {}
+}
+
 self.addEventListener('push', (event) => {
   let payload = {};
   try {
@@ -230,6 +242,7 @@ self.addEventListener('push', (event) => {
     // Hand the payload to the open page so it can show an in-app cue instead.
     const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     const onScreen = wins.some((c) => c.focused || c.visibilityState === 'visible');
+    swBeacon('push-received', { onScreen: onScreen, url: payload.url || '' });
     if (onScreen) {
       wins.forEach((c) => c.postMessage({ type: 'push', payload }));
       return;
@@ -241,6 +254,7 @@ self.addEventListener('push', (event) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
+  swBeacon('notificationclick', { url: (event.notification.data && event.notification.data.url) || '' });
   const rawUrl = (event.notification.data && event.notification.data.url) || './';
   const targetUrl = new URL(rawUrl, self.registration.scope || './').href;
   const targetPath = new URL(targetUrl).pathname;
