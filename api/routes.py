@@ -3901,6 +3901,27 @@ def _truthy_env(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _login_rate_key(handler) -> str:
+    """Rate-limit key for login attempts: the real client IP behind Cloudflare.
+
+    Behind the tunnel the socket peer is always the cloudflared container, so a
+    peer-keyed limiter is one global bucket. With HERMES_WEBUI_TRUST_CF_CONNECTING_IP=1
+    we use CF-Connecting-IP, only when the peer is a private address (i.e. the
+    tunnel, not a direct client that could spoof the header).
+    """
+    peer = str(handler.client_address[0])
+    if _truthy_env("HERMES_WEBUI_TRUST_CF_CONNECTING_IP"):
+        import ipaddress
+        try:
+            if ipaddress.ip_address(peer).is_private:
+                cf = (handler.headers.get("CF-Connecting-IP") or "").strip()
+                if cf:
+                    return str(ipaddress.ip_address(cf))
+        except ValueError:
+            pass
+    return peer
+
+
 def _request_client_ip(handler) -> str:
     try:
         address = getattr(handler, "client_address", None)
@@ -12247,7 +12268,7 @@ def handle_post(handler, parsed) -> bool:
 
         if not is_auth_enabled():
             return j(handler, {"ok": True, "message": "Auth not enabled"})
-        client_ip = handler.client_address[0]
+        client_ip = _login_rate_key(handler)
         if not _check_login_rate(client_ip):
             return j(
                 handler,
@@ -12295,7 +12316,7 @@ def handle_post(handler, parsed) -> bool:
             return j(handler, {"error": "Passkey support is disabled."}, status=404)
         if not is_auth_enabled():
             return j(handler, {"error": "Auth not enabled"}, status=400)
-        client_ip = handler.client_address[0]
+        client_ip = _login_rate_key(handler)
         if not _check_login_rate(client_ip):
             return j(handler, {"error": "Too many attempts. Try again in a minute."}, status=429)
         try:
